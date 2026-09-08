@@ -301,8 +301,13 @@ def push_wechat(title, content, image_url=None):
         content = f"![{title}]({image_url})\n\n{content}"
     url = f"https://sctapi.ftqq.com/{SERVERCHAN_SENDKEY}.send"
     resp = requests.post(url, data={"title": title, "desp": content}, timeout=30)
-    ok = resp.status_code == 200 and "success" in resp.text
-    print(f"[推送] {title} -> {'成功' if ok else '失败'} ({resp.status_code})")
+    ok = False
+    if resp.status_code == 200:
+        try:
+            ok = resp.json().get("code") == 0
+        except Exception:
+            ok = "success" in resp.text
+    print(f"[推送] {title} -> {'成功' if ok else '失败'} ({resp.status_code})" + ("" if ok else f" {resp.text[:200]}"))
     return ok
 
 
