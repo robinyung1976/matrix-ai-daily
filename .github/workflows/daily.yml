@@ -9,6 +9,8 @@ on:
 jobs:
   daily-report:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,5 +27,5 @@ jobs:
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
           SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
           # 上传日报图片到本仓库 images/ 目录（需仓库公开，图片才能被微信加载）
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
