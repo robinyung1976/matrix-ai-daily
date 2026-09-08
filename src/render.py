@@ -77,6 +77,29 @@ GREEN = (120, 255, 160)
 WHITE = (228, 240, 255)
 GREY = (150, 172, 208)
 
+# 条目/正文循环配色（深底可读的高亮色，提高辨识度）
+ITEM_COLORS = [
+    (0, 240, 255),     # 霓虹青
+    (120, 255, 160),   # 荧光绿
+    (255, 215, 120),   # 暖黄
+    (255, 150, 200),   # 樱粉
+    (180, 140, 255),   # 亮紫
+    (255, 180, 110),   # 暖橙
+]
+# 三段式标签 -> 正文色（不同内容类型不同颜色）
+BODY_TAG_COLORS = {
+    "发生了什么": NEON,
+    "意味着什么": (180, 140, 255),
+    "和你有什么关系": (120, 255, 160),
+    "传递的信号": (180, 140, 255),
+    "中小企业能蹭到什么": (255, 215, 120),
+    "风险预警": (255, 160, 120),
+    "政策": (255, 160, 120),
+    "机会": NEON,
+    "方法": (180, 140, 255),
+    "概念": (120, 255, 160),
+}
+
 W = 800
 MARGIN = 36
 
@@ -230,10 +253,11 @@ def _card(layout, title_txt, items, accent=NEON, fill=CARD):
     layout.draw.rounded_rectangle((MARGIN + 16, top + 14, MARGIN + 22, top + 46), 3, fill=accent)
     layout.draw.text((MARGIN + 34, top + 15), title_txt, font=font(20, bold=True), fill=WHITE)
     yy = top + 50
-    for ws in wrapped:
-        layout.draw.rectangle((MARGIN + 22, yy + 7, MARGIN + 30, yy + 15), fill=NEON)
+    for idx, ws in enumerate(wrapped):
+        col = ITEM_COLORS[idx % len(ITEM_COLORS)]
+        layout.draw.rectangle((MARGIN + 22, yy + 7, MARGIN + 30, yy + 15), fill=col)
         for line in ws:
-            layout.draw.text((MARGIN + 42, yy), line, font=f, fill=(200, 224, 255))
+            layout.draw.text((MARGIN + 42, yy), line, font=f, fill=col)
             yy += 32
         yy += 2
     layout.y = top + h + 16
@@ -266,8 +290,9 @@ def _block(layout, tag, title_txt, body, tag_col=NEON):
                    core=WHITE, glow_color=CYAN, glow=4)
         yy_title += 34
     yy = yy_title + 8
+    bcol = BODY_TAG_COLORS.get(tag, NEON)
     for line in body_lines:
-        layout.draw.text((MARGIN + 20, yy), line, font=f, fill=GREY)
+        layout.draw.text((MARGIN + 20, yy), line, font=f, fill=bcol)
         yy += 28
     layout.y = top + h + 16
 
