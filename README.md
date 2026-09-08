@@ -26,7 +26,9 @@ GitHub Actions（每天 UTC 00:00 = 北京 08:00 触发，免费）
    → src/main.py 采集 AI 新闻（Hacker News）+ AI 论文（arXiv）
    → 调 DeepSeek 大模型生成主刊、续刊
    → 调通义千问（联网搜索）生成南京专刊
-   → Server酱推送微信
+   → 解析 Markdown 为结构化数据，渲染赛博风 PNG 长图（src/parser.py + src/render.py）
+   → 上传图片到本仓库 images/（jsDelivr CDN 加速）
+   → Server酱推送微信（图片 + 文字双轨）
 ```
 
 无需自己开电脑，全部在 GitHub 云端运行。
@@ -36,7 +38,10 @@ GitHub Actions（每天 UTC 00:00 = 北京 08:00 触发，免费）
 ```
 matrix-ai-daily/
 ├── .github/workflows/daily.yml   # 每天8点定时任务
+├── assets/logo.jpg               # 报头 Matrix 立方体 logo
 ├── src/main.py                   # 主程序（采集+生成+推送）
+├── src/parser.py                 # Markdown -> 结构化 JSON 解析器
+├── src/render.py                 # 赛博风长图渲染器
 ├── requirements.txt              # 依赖
 └── README.md
 ```
@@ -66,8 +71,10 @@ matrix-ai-daily/
    - `DEEPSEEK_API_KEY`：粘贴 DeepSeek Key
    - `DASHSCOPE_API_KEY`：粘贴通义千问 Key
    - `SERVERCHAN_SENDKEY`：粘贴 Server酱 SendKey
-4. 到 Actions 标签页，点「Run workflow」手动跑一次验证
-5. 验证通过后，每天早 8:00 会自动运行（三刊连推）
+4. **把仓库改为 Public**（图片版必须：日报图片存在仓库 images/ 目录，微信通过 jsDelivr CDN 加载，私有仓库的图片无法公开访问）
+   - Settings → 拉到最底部 Danger Zone → Change visibility → Make public
+5. 到 Actions 标签页，点「Run workflow」手动跑一次验证
+6. 验证通过后，每天早 8:00 会自动运行（三刊连推，微信收到的是可长按保存转发的电子期刊长图）
 
 ## 本地测试（可选）
 
@@ -82,7 +89,9 @@ python src/main.py
 ## 常见问题
 
 - **推送没收到**：先在 Actions 运行日志里看是否报错，再检查 SendKey 是否与微信扫码账号匹配
+- **微信只收到文字、没收到图片**：多半是仓库还是 Private，去 Settings 改成 Public；改完后再 Run workflow 一次
+- **图片加载慢/加载不出**：图片走 jsDelivr CDN，国内一般 1~2 秒加载；如仍不行，可在仓库 Secrets 加 `IMAGE_BASE_URL` 指向自己的图床/OSS 前缀（不填则默认 jsDelivr）
 - **南京专刊没推送**：检查 `DASHSCOPE_API_KEY` 是否已配置、是否开启了 qwen-plus 的联网搜索权限
 - **想改推送时间**：编辑 `.github/workflows/daily.yml` 里的 cron（UTC 时间 = 北京时间 - 8 小时）
-- **想加栏目/改风格**：改 `src/main.py` 里 `generate_main` / `generate_sub` / `generate_nanjing` 的写作要求即可
+- **想加栏目/改风格**：改 `src/main.py` 里 `generate_main` / `generate_sub` / `generate_nanjing` 的写作要求即可；想调整图片版式改 `src/render.py`
 *（内容由AI生成，仅供参考）*
