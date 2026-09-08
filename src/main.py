@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-矩阵AI日报 · 自动生成推送系统
-主刊《矩阵AI日报》 + 续刊《矩阵AI日报·续》
-流程：采集AI资讯 -> 大模型生成两刊 -> Server酱推送微信
+矩阵AI日报 · 自动生成推送系统（图片版）
+主刊《矩阵AI日报》 + 续刊《矩阵AI日报·续》 + 本地专刊《矩阵AI日报·南京》
+流程：采集AI资讯 -> 大模型生成三刊(Markdown) -> 解析为结构化数据 -> 渲染赛博风PNG长图
+      -> 上传图片到仓库 -> Server酱推送微信（图片+文字）
 """
 
 import os
 import sys
+import base64
 import datetime
+import tempfile
 import xml.etree.ElementTree as ET
 
 import requests
@@ -17,6 +20,9 @@ import requests
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
 DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "").strip()
 SERVERCHAN_SENDKEY = os.environ.get("SERVERCHAN_SENDKEY", "").strip()
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
+GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY", "").strip()
+IMAGE_BASE_URL = os.environ.get("IMAGE_BASE_URL", "").strip()  # 可选：自定义图床/CDN前缀
 
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_MODEL = "deepseek-chat"
@@ -28,6 +34,26 @@ ARXIV_API = "https://export.arxiv.org/api/query"
 BRAND_MAIN = "矩阵AI日报"
 BRAND_SUB = "矩阵AI日报·续"
 BRAND_NANJING = "矩阵AI日报·南京"
+
+# 项目根目录（本文件位于 src/ 下）
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.jpg")
+IMG_DIR = os.path.join(tempfile.gettempdir(), "matrix-ai-daily-images")
+os.makedirs(IMG_DIR, exist_ok=True)
+
+# 栏目 -> 英文提示（渲染报头副标）
+EN_MAP = {
+    "今日速报": "TODAY'S BRIEF",
+    "对生意的启示": "INSIGHTS FOR YOUR BUSINESS",
+    "一分钟讲透": "60-SECOND DEEP DIVE",
+    "机会雷达": "OPPORTUNITY RADAR",
+    "新工具速试": "TOOLS TO TRY TODAY",
+    "风险预警": "RISK ALERT",
+    "深度拆解": "DEEP DIVE",
+    "本地政策速递": "LOCAL POLICY",
+    "训练营与活动": "CAMPS & EVENTS",
+    "AI培训机会": "AI TRAINING",
+}
 
 AI_KEYWORDS = [
     "ai", "artificial intelligence", "gpt", "openai", "anthropic", "claude",
@@ -194,11 +220,85 @@ def generate_sub(news, papers):
     return call_deepseek(system, f"今天是{TODAY}，以下是今日采集到的AI资讯素材：\n{format_materials(news, papers)}")
 
 
+# ---------------- 图片渲染：Markdown -> 结构化 -> PNG ----------------
+def build_issue_image(markdown, brand, subtitle, filename, en_hint):
+    """解析 Markdown 并渲染为 PNG，返回 (data, img_path)"""
+    import parser
+    from render import render_issue
+
+    data = parser.md_to_data(markdown, brand=brand, subtitle=subtitle, date=TODAY, issue=TODAY)
+    for sec in data.get("sections", []):
+        sec["en"] = EN_MAP.get(sec.get("title", ""), "")
+
+    img_path = os.path.join(IMG_DIR, filename)
+    try:
+        render_issue(data, img_path, LOGO_PATH if os.path.exists(LOGO_PATH) else None)
+        print(f"[图片] 渲染完成: {img_path} ({os.path.getsize(img_path)} bytes)")
+        return data, img_path
+    except Exception as e:
+        print("[图片] 渲染失败:", e)
+        return data, None
+
+
+# ---------------- 图片上传：GitHub API + jsDelivr CDN ----------------
+def image_public_url(remote_path):
+    if IMAGE_BASE_URL:
+        return IMAGE_BASE_URL.rstrip("/") + "/" + remote_path
+    return f"https://cdn.jsdelivr.net/gh/{GITHUB_REPOSITORY}@main/{remote_path}"
+
+
+def upload_image(local_path, remote_path):
+    """上传图片到仓库指定路径，返回公网 URL；失败返回 None"""
+    if not GITHUB_TOKEN or not GITHUB_REPOSITORY:
+        print("[图片] 缺少 GITHUB_TOKEN/GITHUB_REPOSITORY，跳过上传")
+        return None
+    if not local_path or not os.path.exists(local_path):
+        return None
+    with open(local_path, "rb") as f:
+        content_b64 = base64.b64encode(f.read()).decode()
+
+    url = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/contents/{remote_path}"
+    headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"}
+    try:
+        r = requests.get(url, headers=headers, timeout=20)
+        sha = r.json().get("sha") if r.status_code == 200 else None
+        payload = {"message": f"daily issue image: {remote_path}", "content": content_b64}
+        if sha:
+            payload["sha"] = sha
+        r = requests.put(url, headers=headers, json=payload, timeout=60)
+        if r.status_code not in (200, 201):
+            print(f"[图片] 上传失败: HTTP {r.status_code} {r.text[:200]}")
+            return None
+        public = image_public_url(remote_path)
+        print(f"[图片] 已上传: {public}")
+        return public
+    except Exception as e:
+        print("[图片] 上传异常:", e)
+        return None
+
+
+def purge_jsdelivr(remote_path):
+    """刷新 jsDelivr CDN 缓存，确保微信立即可见新图"""
+    if not GITHUB_REPOSITORY or IMAGE_BASE_URL:
+        return
+    try:
+        requests.post(
+            "https://purge.jsdelivr.net/",
+            json={"paths": [f"/gh/{GITHUB_REPOSITORY}@main/{remote_path}"]},
+            timeout=20,
+        )
+        print("[图片] jsDelivr 缓存已刷新")
+    except Exception as e:
+        print("[图片] jsDelivr 刷新失败:", e)
+
+
 # ---------------- 推送：Server酱 -> 微信 ----------------
-def push_wechat(title, content):
+def push_wechat(title, content, image_url=None):
     if not SERVERCHAN_SENDKEY:
         print("[推送] 未配置 SERVERCHAN_SENDKEY，跳过推送")
         return False
+    if image_url:
+        content = f"![{title}]({image_url})\n\n{content}"
     url = f"https://sctapi.ftqq.com/{SERVERCHAN_SENDKEY}.send"
     resp = requests.post(url, data={"title": title, "desp": content}, timeout=30)
     ok = resp.status_code == 200 and "success" in resp.text
@@ -206,32 +306,44 @@ def push_wechat(title, content):
     return ok
 
 
+def publish_issue(brand, subtitle, markdown, filename, en_hint=""):
+    """一键：渲染 -> 上传 -> 推送（图片版 + 文字版双轨）"""
+    data, img_path = build_issue_image(markdown, brand, subtitle, filename, en_hint)
+    img_url = None
+    if img_path:
+        img_url = upload_image(img_path, f"images/{filename}")
+        if img_url:
+            purge_jsdelivr(f"images/{filename}")
+    push_wechat(f"{brand} | {TODAY}", markdown, img_url)
+    return data, img_url
+
+
 def main():
     if not DEEPSEEK_API_KEY:
         print("错误：缺少 DEEPSEEK_API_KEY，请先在 GitHub Secrets 中配置")
         return 1
 
-    print("[1/4] 开始采集AI资讯...")
+    print("[1/5] 开始采集AI资讯...")
     news = fetch_hacker_news()
     papers = fetch_arxiv()
     print(f"      采集完成：新闻 {len(news)} 条，论文 {len(papers)} 篇")
 
-    print("[2/4] 生成《矩阵AI日报》（主刊）...")
+    print("[2/5] 生成并发布《矩阵AI日报》（主刊）...")
     main_content = generate_main(news, papers)
-    push_wechat(f"{BRAND_MAIN} | {TODAY}", main_content)
+    publish_issue(BRAND_MAIN, "MATRIX AI DAILY · 把AI翻译成生意", main_content, "daily-main.png")
 
-    print("[3/4] 生成《矩阵AI日报·续》（续刊）...")
+    print("[3/5] 生成并发布《矩阵AI日报·续》（续刊）...")
     sub_content = generate_sub(news, papers)
-    push_wechat(f"{BRAND_SUB} | {TODAY}", sub_content)
+    publish_issue(BRAND_SUB, "MATRIX AI DAILY EXTRA · 老板内参版", sub_content, "daily-sub.png")
 
-    print("[4/4] 生成《矩阵AI日报·南京》（本地专刊）...")
+    print("[4/5] 生成并发布《矩阵AI日报·南京》（本地专刊）...")
     if DASHSCOPE_API_KEY:
         nanjing_content = generate_nanjing()
-        push_wechat(f"{BRAND_NANJING} | {TODAY}", nanjing_content)
+        publish_issue(BRAND_NANJING, "NANJING LOCAL EDITION · 本地专刊", nanjing_content, "daily-nanjing.png")
     else:
         print("[推送] 未配置 DASHSCOPE_API_KEY，跳过南京专刊")
 
-    print("[完成] 三刊已推送微信")
+    print("[5/5] 三刊图片版已发布，完成")
     return 0
 
 
