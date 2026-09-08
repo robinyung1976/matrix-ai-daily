@@ -210,9 +210,19 @@ def _section_title(layout, title, en):
 
 
 def _card(layout, title_txt, items, accent=NEON, fill=CARD):
-    """要点列表卡片"""
+    """要点列表卡片（高度按实际换行行数精确计算，杜绝溢出遮挡）"""
     top = layout.y
-    body_h = len(items) * 32
+    f = font(16)
+    max_w = W - 2 * MARGIN - 56
+    # 先统一做前导符号处理并缓存换行结果，保证高度与绘制完全一致
+    wrapped = []
+    for it in items:
+        txt = it
+        for prefix in ("»", "•", "-"):
+            if txt.startswith(prefix):
+                txt = txt[1:].strip()
+        wrapped.append(_wrap(layout.draw, txt, f, max_w))
+    body_h = sum(len(ws) for ws in wrapped) * 32 + len(items) * 2
     h = 40 + body_h + 26
     layout.draw.rounded_rectangle((MARGIN, top, W - MARGIN, top + h), 16, fill=fill)
     for r, col in ((16, NEON), (14, (30, 90, 200))):
@@ -220,29 +230,29 @@ def _card(layout, title_txt, items, accent=NEON, fill=CARD):
     layout.draw.rounded_rectangle((MARGIN + 16, top + 14, MARGIN + 22, top + 46), 3, fill=accent)
     layout.draw.text((MARGIN + 34, top + 15), title_txt, font=font(20, bold=True), fill=WHITE)
     yy = top + 50
-    for it in items:
+    for ws in wrapped:
         layout.draw.rectangle((MARGIN + 22, yy + 7, MARGIN + 30, yy + 15), fill=NEON)
-        txt = it
-        # 前导符号处理
-        for prefix in ("»", "•", "-"):
-            if txt.startswith(prefix):
-                txt = txt[1:].strip()
-        for line in _wrap(layout.draw, txt, font(16), W - 2 * MARGIN - 56):
-            layout.draw.text((MARGIN + 42, yy), line, font=font(16), fill=(200, 224, 255))
+        for line in ws:
+            layout.draw.text((MARGIN + 42, yy), line, font=f, fill=(200, 224, 255))
             yy += 32
         yy += 2
     layout.y = top + h + 16
 
 
 def _block(layout, tag, title_txt, body, tag_col=NEON):
-    """三段式块：标签 + 标题 + 正文"""
+    """三段式块：标签 + 标题 + 正文（高度按实际换行行数精确计算，杜绝溢出遮挡）"""
     top = layout.y
     f = font(15)
     body_lines = []
     for seg in body:
         body_lines += _wrap(layout.draw, seg, f, W - 2 * MARGIN - 44)
+    tf = font(19, bold=True)
+    title_lines = _wrap(layout.draw, title_txt, tf, W - 2 * MARGIN - 40) if title_txt else []
+    if not title_lines:
+        title_lines = [""]
     body_h = len(body_lines) * 28
-    h = 78 + body_h + 22
+    title_h = len(title_lines) * 34
+    h = 50 + title_h + 12 + body_h + 24
     layout.draw.rounded_rectangle((MARGIN, top, W - MARGIN, top + h), 16, fill=CARD2)
     for r, col in ((16, (26, 80, 190)), (14, (20, 40, 100))):
         layout.draw.rounded_rectangle((MARGIN, top, W - MARGIN, top + h), r, outline=col, width=1)
@@ -250,9 +260,12 @@ def _block(layout, tag, title_txt, body, tag_col=NEON):
         lw = _tw(layout.draw, tag, font(14, bold=True)) + 22
         layout.draw.rounded_rectangle((MARGIN + 16, top + 14, MARGIN + 16 + lw, top + 44), 8, fill=tag_col)
         layout.draw.text((MARGIN + 26, top + 17), tag, font=font(14, bold=True), fill=(4, 10, 34))
-    _neon_text(layout.canvas, (MARGIN + 18, top + 52), title_txt, font(19, bold=True),
-               core=WHITE, glow_color=CYAN, glow=4)
-    yy = top + 52 + 36
+    yy_title = top + 50
+    for tl in title_lines:
+        _neon_text(layout.canvas, (MARGIN + 18, yy_title), tl, tf,
+                   core=WHITE, glow_color=CYAN, glow=4)
+        yy_title += 34
+    yy = yy_title + 8
     for line in body_lines:
         layout.draw.text((MARGIN + 20, yy), line, font=f, fill=GREY)
         yy += 28
